@@ -364,8 +364,7 @@ class FlaxDonutSwinDropPath(nn.Module):
             return output
 
 
-# Note: adding rng to function call is a workaround to self.param asssing always passing PRNG key as first argument
-def relative_position_index_init(rng, window_size: Tuple[int, int], dtype: jnp.dtype) -> jnp.ndarray:
+def relative_position_index_init(window_size: Tuple[int, int], dtype: jnp.dtype) -> jnp.ndarray:
     """
     get pair-wise relative position index for each token inside the window
     """
@@ -408,9 +407,7 @@ class FlaxDonutSwinSelfAttention(nn.Module):
             (num_relative_distance, self.num_attention_heads),
         )
 
-        self.relative_position_index = self.param(
-            "relative_position_index", relative_position_index_init, self.window_size, self.dtype
-        )
+        self.relative_position_index = relative_position_index_init(self.window_size, jnp.int32)
         self.query = nn.Dense(self.all_head_size, use_bias=self.config.qkv_bias)
         self.key = nn.Dense(self.all_head_size, use_bias=self.config.qkv_bias)
         self.value = nn.Dense(self.all_head_size, use_bias=self.config.qkv_bias)
