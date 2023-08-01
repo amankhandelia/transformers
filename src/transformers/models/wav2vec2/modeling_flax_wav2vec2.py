@@ -943,9 +943,10 @@ class FlaxWav2Vec2Module(nn.Module):
     def setup(self):
         self.feature_extractor = FlaxWav2Vec2FeatureEncoder(self.config, dtype=self.dtype)
         self.feature_projection = FlaxWav2Vec2FeatureProjection(self.config, dtype=self.dtype)
-        self.masked_spec_embed = self.param(
-            "masked_spec_embed", jax.nn.initializers.uniform(), (self.config.hidden_size,)
-        )
+        if self.config.mask_time_prob > 0.0 or self.config.mask_feature_prob > 0.0:
+            self.masked_spec_embed = self.param(
+                "masked_spec_embed", jax.nn.initializers.uniform(), (self.config.hidden_size,)
+            )
 
         if self.config.do_stable_layer_norm:
             self.encoder = FlaxWav2Vec2StableLayerNormEncoder(self.config, dtype=self.dtype)
@@ -1093,6 +1094,76 @@ overwrite_call_docstring(
 append_replace_return_docstrings(
     FlaxWav2Vec2Model, output_type=FlaxWav2Vec2BaseModelOutput, config_class=Wav2Vec2Config
 )
+
+
+class FlaxWav2Vec2ForAudioFrameClassificationModule(nn.Module):
+    config: Wav2Vec2Config
+    dtype: jnp.dtype = jnp.float32
+
+    def setup(self):
+        self.wav2vec2 = FlaxWav2Vec2Module(self.config, dtype=self.dtype)
+        self.classifier = nn.Dense(
+            self.config.num_labels,
+            kernel_init=jax.nn.initializers.normal(self.config.initializer_range),
+            dtype=self.dtype,
+        )
+
+    def __call__(
+        self,
+        input_values,
+        attention_mask=None,
+        mask_time_indices=None,
+        deterministic=True,
+        output_attentions=None,
+        output_hidden_states=None,
+        freeze_feature_encoder=False,
+        return_dict=None,
+    ):
+        outputs = self.wav2vec2(
+            input_values,
+            attention_mask=attention_mask,
+            mask_time_indices=mask_time_indices,
+            deterministic=deterministic,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            freeze_feature_encoder=freeze_feature_encoder,
+            return_dict=return_dict,
+        )
+
+        hidden_states = outputs[0]
+
+        logits = self.classifier(hidden_states)
+
+        if not return_dict:
+            return (logits,) + outputs[2:]
+
+        return FlaxCausalLMOutput(logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions)
+
+
+@add_start_docstrings(
+    "Wav2Vec2 Model with a `language modeling` head on top for Connectionist Temporal Classification (CTC).",
+    WAV_2_VEC_2_START_DOCSTRING,
+)
+class FlaxWav2Vec2ForAudioFrameClassification(FlaxWav2Vec2PreTrainedModel):
+    module_class = FlaxWav2Vec2ForAudioFrameClassificationModule
+
+# TODO: add documentation for audio alignment model
+
+FLAX_WAV2VEC2_FOR_AudioFrameClassification_DOCSTRING = """
+    Returns:
+
+    Example:
+
+    ```python
+    >>> import jax.numpy as jnp
+    >>> from transformers import AutoProcessor, FlaxWav2Vec2ForAudioFrameClassification
+    >>> from datasets import load_dataset
+    >>> import soundfile as sf
+
+    >>> processor = AutoProcessor.from_pretrained("facebook/wav2vec2-large-960h-lv60")
+    >>> model = FlaxWav2Vec2ForAudioFrameClassification.from_pretrained("facebook/wav2vec2-large-960h-lv60")
+    ```
+"""
 
 
 class FlaxWav2Vec2ForCTCModule(nn.Module):
