@@ -575,6 +575,11 @@ class FlaxWav2Vec2EncoderLayerStableLayerNorm(nn.Module):
         self.feed_forward = FlaxWav2Vec2FeedForward(self.config, dtype=self.dtype)
         self.final_layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps, dtype=self.dtype)
 
+        if getattr(self.config, "adapter_attn_dim", None) is not None:
+            self.adapter_layer = FlaxWav2Vec2AttnAdapterLayer(self.config)
+        else:
+            self.adapter_layer = None
+
     def __call__(self, hidden_states, attention_mask=None, deterministic=True, output_attentions=False):
         attn_residual = hidden_states
         hidden_states = self.layer_norm(hidden_states)
@@ -587,6 +592,9 @@ class FlaxWav2Vec2EncoderLayerStableLayerNorm(nn.Module):
             self.final_layer_norm(hidden_states), deterministic=deterministic
         )
 
+        if self.adapter_layer is not None:
+            hidden_states = hidden_states + self.adapter_layer(hidden_states)
+            
         outputs = (hidden_states,)
 
         if output_attentions:
@@ -822,6 +830,32 @@ class FlaxWav2Vec2AdapterLayer(nn.Module):
     def __call__(self, hidden_states):
         hidden_states = self.conv(hidden_states)
         hidden_states = nn.glu(hidden_states, axis=2)
+
+        return hidden_states
+
+class FlaxWav2Vec2AttnAdapterLayer(nn.Module):
+    config: Wav2Vec2Config
+    dtype: jnp.dtype = jnp.float32
+
+    def setup(self):
+        input_dim = self.config.adapter_attn_dim
+        hidden_dim = self.config.hidden_size
+        
+        # Layer definitions
+        self.norm = nn.LayerNorm()
+        self.linear_1 = nn.Dense(features=input_dim)
+        self.linear_2 = nn.Dense(features=hidden_dim)
+
+    def __call__(self, hidden_states: jnp.ndarray) -> jnp.ndarray:
+        # applying layer normalization
+        hidden_states = self.norm(hidden_states)
+
+        # applying linear projection followed by activation
+        hidden_states = self.linear_1(hidden_states)
+        hidden_states = jax.nn.relu(hidden_states)
+        
+        # applying second linear projection
+        hidden_states = self.linear_2(hidden_states)
 
         return hidden_states
 
